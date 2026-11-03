@@ -1,0 +1,41 @@
+{
+  "remote_allowed_regions": [
+    "global",
+    "mena"
+  ],
+  "remote_location_phrases": [
+    "worldwide",
+    "anywhere",
+    "global",
+    "emea"
+  ],
+  "uae_country_code": "ae",
+  "work_modes": [
+    "remote",
+    "onsite",
+    "hybrid"
+  ],
+  "core_skills": [
+    "ruby",
+    "rails",
+    "nodejs",
+    "nestjs",
+    "typescript",
+    "javascript",
+    "react",
+    "react-native",
+    "vue",
+    "postgresql",
+    "api",
+    "rspec"
+  ],
+  "role_title_pattern": "(?i)(software|developer|engineer|full.?stack|back.?end|front.?end|mobile|rails|react|node)",
+  "minimum_skill_overlap": 2,
+  "max_starts_per_utc_day": 3,
+  "min_seconds_between_starts": 1800,
+  "page_size": 100,
+  "max_pages_per_search": 100,
+  "max_new_starts_per_run": 3,
+  "auto_approve_ready_attempts": true,
+  "min_deterministic_skill_coverage_percent": 65
+}
