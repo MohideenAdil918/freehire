@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/meilisearch/meilisearch-go"
@@ -112,6 +113,11 @@ type Client struct {
 	// concurrency, but a remote GPU endpoint does (it hides per-call latency) — a bulk
 	// reindex sets it high.
 	embedConcurrency int
+	// indexMu serializes the first requests that find no jobs index, and indexBuilt
+	// remembers that EnsureIndex succeeded, so a burst does not each queue its own
+	// settings task. See retryOnMissingIndex.
+	indexMu    sync.Mutex
+	indexBuilt bool
 }
 
 // Option customizes a Client at construction (see NewClient).
@@ -516,6 +522,36 @@ func isBadRequest(err error) bool {
 	return errors.As(err, &me) && me.StatusCode == http.StatusBadRequest
 }
 
+// isIndexNotFound reports Meilisearch's answer for a query against an index that has
+// not been created yet, which is the state of a fresh catalogue before its first
+// reindex.
+func isIndexNotFound(err error) bool {
+	var me *meilisearch.Error
+	return errors.As(err, &me) && me.MeilisearchApiError.Code == "index_not_found"
+}
+
+// retryOnMissingIndex runs op and, when Meilisearch says the jobs index does not
+// exist, creates it with its settings and runs op again. Without this a fresh
+// install answered every search and facet count with a 500 while the truthful
+// answer was "the catalogue is empty" — the index only exists once reindex has run.
+// Creation is idempotent, and the lock keeps a burst of first requests from each
+// queueing its own settings task. A deletion after the index was built is left to
+// reindex: rebuilding the catalogue is its job, not a request's.
+func (c *Client) retryOnMissingIndex(ctx context.Context, op func() error) error {
+	if err := op(); !isIndexNotFound(err) {
+		return err
+	}
+	c.indexMu.Lock()
+	defer c.indexMu.Unlock()
+	if !c.indexBuilt {
+		if err := c.EnsureIndex(ctx); err != nil {
+			return err
+		}
+		c.indexBuilt = true
+	}
+	return op()
+}
+
 // queryErr is how every query against every index reports a failure, under the op
 // prefix the caller names.
 //
@@ -599,13 +635,21 @@ func (c *Client) Search(ctx context.Context, p SearchParams) (SearchResult, erro
 		if alts[0].Fields != nil {
 			p.QFields = alts[0].Fields
 		}
-		resp, err := c.facet.SearchWithContext(ctx, p.Query, buildSearchRequest(p))
+		var resp *meilisearch.SearchResponse
+		err := c.retryOnMissingIndex(ctx, func() (opErr error) {
+			resp, opErr = c.facet.SearchWithContext(ctx, p.Query, buildSearchRequest(p))
+			return opErr
+		})
 		if err != nil {
 			return SearchResult{}, queryErr(ctx, "search: query", err)
 		}
 		hits, total = resp.Hits, resp.EstimatedTotalHits
 	} else {
-		resp, err := c.manager.MultiSearchWithContext(ctx, buildFederatedSearch(p, alts))
+		var resp *meilisearch.MultiSearchResponse
+		err := c.retryOnMissingIndex(ctx, func() (opErr error) {
+			resp, opErr = c.manager.MultiSearchWithContext(ctx, buildFederatedSearch(p, alts))
+			return opErr
+		})
 		if err != nil {
 			return SearchResult{}, queryErr(ctx, "search: federated query", err)
 		}

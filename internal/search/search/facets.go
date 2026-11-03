@@ -112,14 +112,23 @@ func (c *Client) facetSearch(ctx context.Context, query string, filter any, face
 		return nil, err
 	}
 	if len(alts) == 1 {
-		return c.facet.SearchWithContext(ctx, alts[0].Text, &meilisearch.SearchRequest{
-			Filter:               filter,
-			Facets:               facets,
-			Limit:                0,
-			AttributesToSearchOn: alts[0].Fields,
+		var resp *meilisearch.SearchResponse
+		err := c.retryOnMissingIndex(ctx, func() (opErr error) {
+			resp, opErr = c.facet.SearchWithContext(ctx, alts[0].Text, &meilisearch.SearchRequest{
+				Filter:               filter,
+				Facets:               facets,
+				Limit:                0,
+				AttributesToSearchOn: alts[0].Fields,
+			})
+			return opErr
 		})
+		return resp, err
 	}
-	resp, err := c.manager.MultiSearchWithContext(ctx, buildFederatedFacets(alts, filter, facets))
+	var resp *meilisearch.MultiSearchResponse
+	err = c.retryOnMissingIndex(ctx, func() (opErr error) {
+		resp, opErr = c.manager.MultiSearchWithContext(ctx, buildFederatedFacets(alts, filter, facets))
+		return opErr
+	})
 	if err != nil {
 		return nil, err
 	}
